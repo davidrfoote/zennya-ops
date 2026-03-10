@@ -56,18 +56,17 @@ export async function fetchAllIssues(): Promise<JiraIssue[]> {
   const maxResults = 100;
 
   while (true) {
-    const res = await fetch(`${baseUrl}/rest/api/3/search`, {
-      method: 'POST',
+    const params = new URLSearchParams({
+      jql,
+      startAt: String(startAt),
+      maxResults: String(maxResults),
+      fields: 'summary,status,assignee,labels,project,customfield_10016',
+    });
+    const res = await fetch(`${baseUrl}/rest/api/3/search/jql?${params}`, {
+      method: 'GET',
       headers: {
         Authorization: `Basic ${auth}`,
-        'Content-Type': 'application/json',
       },
-      body: JSON.stringify({
-        jql,
-        startAt,
-        maxResults,
-        fields: ['summary', 'status', 'assignee', 'labels', 'project', 'customfield_10016'],
-      }),
       cache: 'no-store',
     });
 
