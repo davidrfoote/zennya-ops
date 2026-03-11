@@ -40,15 +40,35 @@ function normalizeStatus(status: string): PipelineStage {
   return 'backlog';
 }
 
-async function fetchJiraIssues(jql: string, cacheKey: string, fields: string): Promise<JiraIssue[]> {
-  let redis;
+async function tryGetRedisCache(cacheKey: string): Promise<JiraIssue[] | null> {
   try {
-    redis = getRedis();
-    const cached = await redis.get(cacheKey);
-    if (cached) return JSON.parse(cached);
+    const redis = getRedis();
+    const cached = await Promise.race([
+      redis.get(cacheKey),
+      new Promise<null>((resolve) => setTimeout(() => resolve(null), 2000)),
+    ]);
+    if (cached) return JSON.parse(cached as string);
   } catch (e) {
     console.error('Redis get error:', e);
   }
+  return null;
+}
+
+async function trySetRedisCache(cacheKey: string, data: JiraIssue[]): Promise<void> {
+  try {
+    const redis = getRedis();
+    await Promise.race([
+      redis.setex(cacheKey, 300, JSON.stringify(data)),
+      new Promise<void>((resolve) => setTimeout(resolve, 2000)),
+    ]);
+  } catch (e) {
+    console.error('Redis set error:', e);
+  }
+}
+
+async function fetchJiraIssues(jql: string, cacheKey: string, fields: string): Promise<JiraIssue[]> {
+  const cached = await tryGetRedisCache(cacheKey);
+  if (cached) return cached;
 
   const baseUrl = process.env.JIRA_BASE_URL || 'https://zennya.atlassian.net';
   const email = process.env.JIRA_EMAIL || '';
@@ -66,11 +86,24 @@ async function fetchJiraIssues(jql: string, cacheKey: string, fields: string): P
       maxResults: String(maxResults),
       fields,
     });
-    const res = await fetch(`${baseUrl}/rest/api/3/search/jql?${params}`, {
-      method: 'GET',
-      headers: { Authorization: `Basic ${auth}` },
-      cache: 'no-store',
-    });
+
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 15000);
+
+    let res: Response;
+    try {
+      res = await fetch(`${baseUrl}/rest/api/3/search/jql?${params}`, {
+        method: 'GET',
+        headers: { Authorization: `Basic ${auth}` },
+        cache: 'no-store',
+        signal: controller.signal,
+      });
+    } catch (e) {
+      clearTimeout(timeout);
+      console.error('Jira fetch error:', e);
+      break;
+    }
+    clearTimeout(timeout);
 
     if (!res.ok) {
       const err = await res.text();
@@ -111,14 +144,7 @@ async function fetchJiraIssues(jql: string, cacheKey: string, fields: string): P
     startAt += maxResults;
   }
 
-  try {
-    if (redis) {
-      await redis.setex(cacheKey, 300, JSON.stringify(issues));
-    }
-  } catch (e) {
-    console.error('Redis set error:', e);
-  }
-
+  await trySetRedisCache(cacheKey, issues);
   return issues;
 }
 
@@ -139,7 +165,7 @@ export async function fetchDomainIssues(projects: string[], labelFilter?: string
 }
 
 export async function fetchEpics(): Promise<JiraIssue[]> {
-  const jql = 'issuetype = Epic ORDER BY created DESC';
+  const jql = 'issuetype = Epic AND project in (ZI, "BIZ-OPS", STRATEGY, LOGISTICS) ORDER BY created DESC';
   return fetchJiraIssues(jql, 'jira:epics:all', 'summary,status,assignee,labels,project,issuetype,created,updated,duedate,customfield_10015');
 }
 
