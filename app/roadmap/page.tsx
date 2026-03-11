@@ -7,8 +7,12 @@ export const dynamic = 'force-dynamic';
 export default async function RoadmapPage() {
   const lastSynced = new Date().toISOString();
   let epics: JiraIssue[] = [];
+
   try {
-    epics = await fetchEpics();
+    epics = await Promise.race([
+      fetchEpics(),
+      new Promise<JiraIssue[]>((resolve) => setTimeout(() => resolve([]), 10000)),
+    ]);
   } catch (e) {
     console.error('RoadmapPage fetch error:', e);
   }

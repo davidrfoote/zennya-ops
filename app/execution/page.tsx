@@ -11,13 +11,19 @@ export default async function ExecutionPage() {
   let sessions: DevSession[] = [];
 
   try {
-    sprintIssues = await fetchSprintIssues();
+    sprintIssues = await Promise.race([
+      fetchSprintIssues(),
+      new Promise<JiraIssue[]>((resolve) => setTimeout(() => resolve([]), 10000)),
+    ]);
   } catch (e) {
     console.error('sprint fetch error:', e);
   }
 
   try {
-    sessions = await fetchActiveSessions();
+    sessions = await Promise.race([
+      fetchActiveSessions(),
+      new Promise<DevSession[]>((resolve) => setTimeout(() => resolve([]), 5000)),
+    ]);
   } catch (e) {
     console.error('sessions fetch error:', e);
   }
